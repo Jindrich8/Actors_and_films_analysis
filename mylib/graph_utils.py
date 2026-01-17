@@ -27,12 +27,13 @@ def get_graph_metrics(G,cliques=None,distance_key=None,weight_key=None):
         "Mosty":bridges,
     }
 
-def get_graph_metrics_df(G,cliques=None,weight_key=None):
+def get_graph_metrics_df(G,cliques=None,weight_key=None,distance_key=None):
     return pl.DataFrame([
         get_graph_metrics(
             G,
             cliques=cliques,
-            weight_key=weight_key
+            weight_key=weight_key,
+            distance_key=distance_key
             )
         ])
 

@@ -4,7 +4,8 @@ import polars as pl
 import pandas as pd
 from polars.expr.list import ExprListNameSpace
 
-
+type PolarsAnyDataFrame = pl.DataFrame|pl.LazyFrame
+type AnyDataFrame = PolarsAnyDataFrame | pd.DataFrame
 
 def load_lazy(path: str,separator:str,list_sep=",", schema: dict = None,has_header=True, null_values="\\N",strip_list_encapsulation:tuple[str,str] = ("[","]"),strip_list_item_encapsulation:tuple[str,str] = ('"','"')) -> pl.LazyFrame:
     """
@@ -54,7 +55,7 @@ def load_lazy(path: str,separator:str,list_sep=",", schema: dict = None,has_head
 
     return df_lazy
 
-def as_lazy(df:pl.DataFrame|pl.LazyFrame)->pl.LazyFrame:
+def as_lazy(df:PolarsAnyDataFrame)->pl.LazyFrame:
     """Converts given data frame to LazyFrame if needed.
 
     Args:
@@ -65,77 +66,54 @@ def as_lazy(df:pl.DataFrame|pl.LazyFrame)->pl.LazyFrame:
     """
     return df.lazy() if isinstance(df,pl.DataFrame) else df
 
+def count(iter:Iterable)->int:
+    count = 0
+    for _ in iter:
+        count+=1
+    return count
+
 def collect_if_lazy(df):
     if(isinstance(df,pl.LazyFrame)):
         df = df.collect()
     return df
 
-def join_on_coalesce(df_to_fill:pl.DataFrame|pl.LazyFrame,df_other:pl.DataFrame|pl.LazyFrame,on:str | pl.Expr | pl.Sequence[str | pl.Expr]):
-    """Corresponds to left join with coalesce on columns with same name not specifed in `on` argument.
-    If both columns have non-null value, value in df_to_fill data frame is kept.
-    This effectively fills null values in df_to_fill data frame when rows with filled columns exist in other data frame.
-
-    Args:
-        df_to_fill (pl.DataFrame): Base data frame
-        df_other (pl.DataFrame): Data frame to left join with
-        on (str | pl.Expr | pl.Sequence[str  |  pl.Expr]): Columns to join on
-
-    Returns:
-        pl.DataFrame|pl.LazyFrame: Result of operation
-    """
-    suffix = "_right"
-    def to_coalesce(col:str):
-        col_no_suffix = col.removesuffix(suffix)
-        return pl.coalesce(col_no_suffix,col).alias(col_no_suffix)
-
-    df_to_fill.update()
-    df_joined = df_to_fill.join(
-        df_other,
-        on=on,
-        how="left",
-        suffix=suffix
-        )
-    right_columns = list(filter(lambda col: col.endswith(suffix),df_joined.columns))
-    return df_joined.with_columns(
-            map(to_coalesce,right_columns)
-        ).drop(right_columns)
-
-
-def df_to_html(df:pd.DataFrame|pl.LazyFrame|pl.DataFrame,title:str|None=None,hide_index:bool = True)->str:
-    styler = (df if isinstance(df,pd.DataFrame) else df.to_pandas()).style
-    if(hide_index):
-        styler = styler.hide(axis="index")
+def df_to_html(df:AnyDataFrame,title:str|None=None,hide_index:bool = True)->str:
+    CAPTION_STYLE = "font-size:large; font-weight: bolder; margin: 1rem;"
+    if isinstance(df,pd.DataFrame):
+        styler = (df.style.hide(axis="index") if hide_index else df.style)
         
-    return styler.set_table_styles([{
+        return (styler if title == None else styler.set_table_styles([{
         "selector":"caption",
-        "props":"font-size:large; font-weight: bolder; margin: 1rem;"
-        }]).set_caption(title).to_html()
+        "props":CAPTION_STYLE
+        }]).set_caption(title)).to_html()
+    else:
+        import re
+        html = collect_if_lazy(df)._repr_html_()
+        if title != None:
+            insert_index = re.search("<\\s*table[^>]*>",html).span()[1]
+            html = html[:insert_index] + f"<caption style='{CAPTION_STYLE}'>{title}</caption>" + html[insert_index:]
+        return html
 
 def display_html(str:str):
     from IPython.display import display, HTML
     display(HTML(str))
 
 def display_with_title(title:str,df:pd.DataFrame|pl.LazyFrame|pl.DataFrame,hide_index:bool = True):
-    display_html(df_to_html(df=df,title=title,hide_index=hide_index))
+    display_html(df_to_html(df,title,hide_index))
 
-def display_side_by_side(dfs:Iterable[pl.LazyFrame|pl.DataFrame|pd.DataFrame], titles:list[str]|None=None,hide_index:bool = True):
+def display_side_by_side(*dfs:AnyDataFrame|tuple[str,AnyDataFrame],hide_index:bool = True):
+    title_w_df = map(lambda df: (None,df) if not isinstance(df,tuple) else df,dfs)
+    
     display_html(
-        "<div style='display:flex; flex-wrap:wrap; gap:30px;'>"\
-        +"".join(
-            map(lambda df_i: df_to_html(
-                title=titles[df_i[1]] if len(titles) > df_i[1] else None,
-                df=df_i[0],
+        "<div style='display:flex; flex-wrap:wrap; gap:30px;'>"+"".join(
+            map(lambda title_w_df: df_to_html(
+                title= title_w_df[0],
+                df=title_w_df[1],
                 hide_index=hide_index
                 ),
-                enumerate(dfs)
+                title_w_df
                 )
-            )\
-        +"</div>"
-    )
-
-
-def head_side_by_side(*dfs:pl.LazyFrame, n:int=5, titles:list[str]|None=None,hide_index:bool = True):
-    display_side_by_side(map(lambda df: df.head(n),dfs),titles=titles,hide_index=hide_index) 
+            )+"</div>")
     
 
 import polars as pl
